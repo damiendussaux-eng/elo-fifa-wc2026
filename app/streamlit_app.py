@@ -687,8 +687,13 @@ def guardrails() -> None:
         """
 <div style="background:#3a0ca3;border-left:6px solid #f72585;border-radius:8px;
             padding:10px 16px;margin:2px 0 12px 0;color:#fff;font-size:0.9rem;">
-<b>⚠️ Garde-fous</b> — Sur chaque ligne : <b>P(se qualifier)</b> · <b>buts les plus
-probables</b>, via une couche « buts »
+<b>⚠️ Garde-fous</b> — Attention, ces pronostics ont été générés juste pour le
+plaisir de coder, pas pour être utilisés pour faire des paris sportifs.<br>
+Les jeux d'argent et de hasard peuvent être dangereux : pertes d'argent, conflits
+familiaux, addiction… Nos conseils sur joueurs-info-service.fr
+(09-74-75-13-13 - appel non surtaxé).<br>
+<b>Comment lire les tableaux ?</b> Sur chaque ligne : la probabilité de se
+qualifier et les buts les plus probables, via une couche « buts »
 (λ = polynôme de l'Elo, Csató &amp; Gyimesi 2025) à deux lois de Poisson
 indépendantes. Limites assumées : modèle de buts <b>étendu aux knockouts</b>
 (usage au-delà des auteurs) ; Poisson indépendantes (sous-estime un peu les nuls
@@ -755,12 +760,14 @@ def main() -> None:
         1 for boxes in tree["rounds"] for bx in boxes
         for p in (bx.a, bx.b) if p.known
     )
-    st.caption(
-        f"31 matchs · {n_known} équipes déjà placées · avantage hôte = "
-        f"{home_adv} pts Elo · ★ = nation hôte · ✓ = vainqueur connu."
-    )
-
     st.markdown("## 🏆 Phase finale de la Coupe du Monde de football 2026")
+    st.markdown(
+        '<div style="font-size:1.05rem;font-weight:600;color:#1c1c1c;'
+        'margin:2px 0 10px 0;">'
+        f'31 matchs · {n_known} équipes déjà placées · avantage hôte = '
+        f'{home_adv} pts Elo · ★ = nation hôte · ✓ = vainqueur connu.</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(status_legend(), unsafe_allow_html=True)
     col_tree, col_list = st.columns([5, 1.2], gap="medium")
     with col_tree:
