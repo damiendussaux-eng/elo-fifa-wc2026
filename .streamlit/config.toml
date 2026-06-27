@@ -1,0 +1,14 @@
+# Thème fixé en CLAIR : l'app mélange des blocs sombres (HTML inline, arbre/groupes)
+# et des sections à texte noir (camemberts, RPS) prévues pour un fond clair. On épingle
+# le mode clair pour un rendu identique chez tous les visiteurs (sinon Streamlit suivrait
+# le mode sombre du navigateur et le texte noir deviendrait illisible).
+[theme]
+base = "light"
+primaryColor = "#f72585"            # accent rose de l'app (widgets, focus)
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1efe8"  # barre latérale
+textColor = "#1c1c1c"
+font = "sans serif"
+
+[server]
+headless = true

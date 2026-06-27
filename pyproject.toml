@@ -1,0 +1,29 @@
+[project]
+name = "elo-fifa-wc2026"
+version = "0.1.0"
+description = "Bracket WC2026 — probabilités Elo + Monte-Carlo (UI Streamlit)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "streamlit>=1.36",
+    "requests>=2.32",
+    "python-dotenv>=1.0",
+]
+# Stockage = SQLite (module `sqlite3` de la stdlib) -> aucune dépendance DB, et
+# compatible Streamlit Community Cloud (gratuit). Plus de Postgres/psycopg/Docker.
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+]
+
+# L'arbre du moteur est plat à la racine (elo.py, ratings_engine.py, bracket_sim.py)
+# et les modules applicatifs (db/, ingestion/, app/) importent depuis cette racine.
+# On ne package donc rien : tout se lance depuis la racine du dépôt.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

@@ -1,0 +1,7 @@
+# Dépendances pour Streamlit Community Cloud (déploiement gratuit).
+# Stockage = SQLite (module stdlib `sqlite3`, aucune dépendance à ajouter).
+streamlit>=1.36
+pandas>=2.2
+numpy>=1.26
+requests>=2.32
+python-dotenv>=1.0
