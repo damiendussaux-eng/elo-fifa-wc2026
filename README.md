@@ -1,5 +1,20 @@
 # elo_fifa_wc2026 — Bracket WC2026 (Elo + Monte-Carlo)
 
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://elo-fifa-wc2026-altrmiojywwesyp28w7p6z.streamlit.app)
+
+## 🚀 Déploiement (Streamlit Community Cloud, gratuit)
+
+Application en ligne : **https://elo-fifa-wc2026-altrmiojywwesyp28w7p6z.streamlit.app**
+
+Pour (re)déployer : pousser sur GitHub, puis sur
+[share.streamlit.io](https://share.streamlit.io) → *New app* → repo
+`damiendussaux-eng/elo-fifa-wc2026`, branche `main`, **Main file =
+`app/streamlit_app.py`**. Aucun secret ni base externe : SQLite local + données
+récupérées au lancement (dataset martj42 + ESPN). Chaque push sur `main`
+redéploie automatiquement.
+
+---
+
 **Arbre du tableau final** (style Google) de la Coupe du Monde FIFA 2026 : 31
 cases-matchs sur 5 colonnes (Seizièmes 16 → Huitièmes 8 → Quarts 4 → Demies 2 →
 Finale 1). Chaque case = un match avec sa **date**, ses **deux équipes** (drapeau,
