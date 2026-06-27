@@ -279,7 +279,8 @@ def render_tree(tree: dict) -> None:
             parts.append(_connector_column(ROUND_SIZES[r]))
     html = (
         f'<div style="display:flex;height:{BRACKET_H}px;background:#0b0e1f;'
-        f'border-radius:10px;padding:8px;overflow-x:auto;">'
+        f'border-radius:10px;padding:8px;overflow-x:auto;'
+        f'-webkit-overflow-scrolling:touch;">'
         + "".join(parts) + "</div>"
     )
     st.markdown(html, unsafe_allow_html=True)
@@ -405,8 +406,8 @@ def render_groups(standings: dict[str, list[dict]]) -> None:
     cards = "".join(_group_card(c, standings[c]) for c in DISPLAY_GROUPS
                     if c in standings)
     grid = (
-        '<div style="display:grid;gap:12px;justify-content:center;'
-        'grid-template-columns:repeat(2,minmax(0,470px));">'
+        '<div style="display:grid;gap:12px;'
+        'grid-template-columns:repeat(auto-fit,minmax(300px,1fr));">'
         + cards + '</div>'
     )
     legend = (
@@ -492,8 +493,8 @@ def render_group_fixtures(fixtures: dict[str, list[dict]]) -> None:
             f'<div style="font-weight:700;color:#f72585;margin-bottom:2px;'
             f'font-size:0.85rem;">Groupe {code}</div>{boxes}</div>'
         )
-    grid = ('<div style="display:grid;gap:12px;justify-content:start;'
-            'grid-template-columns:repeat(auto-fill,minmax(300px,360px));">'
+    grid = ('<div style="display:grid;gap:12px;'
+            'grid-template-columns:repeat(auto-fit,minmax(300px,1fr));">'
             + "".join(cards) + '</div>')
     legend = (
         '<div style="margin-top:10px;color:#b8c0e0;font-size:0.76rem;">'
@@ -570,7 +571,7 @@ def render_stats(fixtures: dict[str, list[dict]]) -> None:
         '</div>'
     )
     html = (
-        '<div style="display:flex;gap:40px;justify-content:center;align-items:center;'
+        '<div style="display:flex;gap:20px;justify-content:center;align-items:center;'
         'flex-wrap:wrap;padding:6px 0;">'
         + _svg_donut(res_ok / n, "Résultats bien prédits",
                      f"{res_ok}/{n} matchs (V/N/D)", "#16e0a3")
@@ -706,8 +707,23 @@ Estimations, pas une vérité.
     )
 
 
+RESPONSIVE_CSS = """
+<style>
+/* Largeur max sur très grand écran + padding compact (surtout mobile). */
+.block-container { max-width: 1500px; padding-top: 1.4rem;
+                  padding-left: 1.2rem; padding-right: 1.2rem; }
+@media (max-width: 640px) {
+  .block-container { padding-left: 0.5rem; padding-right: 0.5rem; padding-top: 0.8rem; }
+  h1 { font-size: 1.5rem !important; }
+  h2 { font-size: 1.25rem !important; }
+}
+</style>
+"""
+
+
 def main() -> None:
     boot = bootstrap_refresh()   # rafraîchit tout (1×/lancement) avant l'affichage
+    st.markdown(RESPONSIVE_CSS, unsafe_allow_html=True)
 
     st.title("🌎 Coupe du Monde de Football 2026 — Résultats et pronostics "
              "basés sur score Elo")
@@ -769,6 +785,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(status_legend(), unsafe_allow_html=True)
+    st.caption("↔ Sur petit écran, faites glisser l'arbre horizontalement.")
     col_tree, col_list = st.columns([5, 1.2], gap="medium")
     with col_tree:
         render_tree(tree)
