@@ -33,13 +33,17 @@ st.set_page_config(
 
 
 @st.cache_resource(show_spinner="Mise à jour des données (téléchargement, Elo, "
-                                "bracket, groupes)…")
+                                "bracket, groupes)…",
+                   ttl=900)  # 15 min : sinon les données restent figées au 1er boot
 def bootstrap_refresh() -> dict:
     """
-    Rafraîchit TOUT à chaque lancement de l'app (un process = une exécution, grâce
-    à cache_resource) : re-télécharge le dataset, recalcule l'Elo, réingère le
-    bracket et les matchs/classements de poule. Robuste : repli sur le cache local
-    si le réseau échoue, et n'empêche pas l'app de démarrer si la base est KO.
+    Rafraîchit TOUT périodiquement : re-télécharge le dataset, recalcule l'Elo,
+    réingère le bracket et les matchs/classements de poule. Le TTL (15 min) est
+    ESSENTIEL en ligne : sans lui, cache_resource ne s'exécute qu'au démarrage du
+    process Streamlit Cloud et sert ensuite des données figées indéfiniment (les
+    nouveaux résultats et 3es de groupe ne remontaient jamais). Robuste : repli sur
+    le cache local si le réseau échoue, et n'empêche pas l'app de démarrer si la
+    base est KO.
     """
     from db.migrate import migrate
     from ingestion import (load_history, load_ratings, live_results,
