@@ -279,20 +279,36 @@ def elo_rank_change() -> dict[str, int]:
 
 def resolve_bracket() -> int:
     """
-    Place AUTOMATIQUEMENT les 1ers/2es de groupe dans les slots R32 du bracket,
-    dès qu'un groupe est TERMINÉ (toutes les équipes ont joué leurs 3 matchs).
-    Mappe les libellés « Vainqueur X » -> 1er du groupe X et « 2e X » -> 2e du
-    groupe X. Les « 3e groupe » (meilleurs 3es) restent indéterminés (Annexe C).
+    Place AUTOMATIQUEMENT les équipes dans les slots R32 du bracket :
+      - 1ers/2es de groupe dès qu'un groupe est TERMINÉ (« Vainqueur X » -> 1er,
+        « 2e X » -> 2e) ;
+      - les 8 MEILLEURS 3es dans les slots « 3e groupe », mais SEULEMENT une fois
+        les 12 groupes terminés (sinon on ne peut pas classer les 12 troisièmes).
+
+    Placement des 3es = indicatif : les 8 meilleurs 3es (tri Pts/DB/BP sur les 12
+    troisièmes) sont affectés aux 8 slots dans l'ordre des affiches. L'affectation
+    EXACTE suit l'Annexe C FIFA (495 combinaisons) — non reproduite ici.
 
     Retourne le nombre de slots renseignés. Idempotent (rejoué à chaque lancement).
     """
+    standings = group_standings()
     label_to_team: dict[str, int] = {}
-    for code, rows in group_standings().items():
+    finished = []                                  # groupes terminés
+    for code, rows in standings.items():
         if len(rows) != 4 or not all(r["mj"] == 3 for r in rows):
             continue                               # groupe non terminé
+        finished.append(code)
         label_to_team[f"Vainqueur {code}"] = rows[0]["team_id"]   # 1er (tri Pts/DB/BP)
         label_to_team[f"2e {code}"] = rows[1]["team_id"]          # 2e
-    if not label_to_team:
+
+    # 8 meilleurs 3es : seulement si les 12 groupes sont terminés.
+    best_thirds: list[tuple[str, int]] = []        # (groupe, team_id), meilleur d'abord
+    if len(finished) == 12:
+        thirds = [(code, rows[2]) for code, rows in standings.items() if len(rows) >= 3]
+        thirds.sort(key=lambda cr: (cr[1]["pts"], cr[1]["db"], cr[1]["bp"]), reverse=True)
+        best_thirds = [(code, row["team_id"]) for code, row in thirds[:8]]
+
+    if not label_to_team and not best_thirds:
         return 0
     n = 0
     with connect() as conn, conn.cursor() as cur:
@@ -303,6 +319,32 @@ def resolve_bracket() -> int:
                 (tid, label),
             )
             n += cur.rowcount
+        # Affecte les 8 meilleurs 3es aux 8 slots « 3e groupe ». Placement indicatif,
+        # mais on ÉVITE un affrontement contre le 1er de son PROPRE groupe (impossible
+        # selon l'Annexe C). L'adversaire (vainqueur de groupe) est déjà placé.
+        if best_thirds:
+            group_of_team = dict(
+                cur.execute("SELECT team_id, group_code FROM group_teams").fetchall())
+            slots = cur.execute(
+                "SELECT match_idx, position, team_id, label FROM bracket_slots "
+                "WHERE round_idx = 0").fetchall()
+            by_pos = {(mi, pos): tid for mi, pos, tid, _lab in slots}
+            third_slots = sorted((mi, pos) for mi, pos, _t, lab in slots
+                                 if lab == "3e groupe")
+            remaining = list(best_thirds)
+            for mi, pos in third_slots:
+                opp_group = group_of_team.get(by_pos.get((mi, 1 - pos)))
+                pick = next((i for i, (g, _t) in enumerate(remaining)
+                             if g != opp_group), 0 if remaining else None)
+                if pick is None:
+                    continue
+                _g, tid = remaining.pop(pick)
+                cur.execute(
+                    "UPDATE bracket_slots SET team_id = %s "
+                    "WHERE round_idx = 0 AND match_idx = %s AND position = %s",
+                    (tid, mi, pos),
+                )
+                n += cur.rowcount
     return n
 
 

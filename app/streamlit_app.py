@@ -785,7 +785,9 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(status_legend(), unsafe_allow_html=True)
-    st.caption("↔ Sur petit écran, faites glisser l'arbre horizontalement.")
+    st.caption("↔ Sur petit écran, faites glisser l'arbre horizontalement. "
+               "Les slots « 3e groupe » (8 meilleurs 3es) se remplissent une fois "
+               "les 12 groupes terminés — placement indicatif (Annexe C FIFA).")
     col_tree, col_list = st.columns([5, 1.2], gap="medium")
     with col_tree:
         render_tree(tree)
