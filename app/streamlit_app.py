@@ -49,6 +49,20 @@ def bootstrap_refresh() -> dict:
     from ingestion import (load_history, load_ratings, live_results,
                            source_fixtures, source_groups)
 
+    # Auto-réparation Streamlit Cloud : après un push qui AJOUTE des fonctions, le
+    # file-watcher ré-exécute ce script mais peut garder en cache (sys.modules) les
+    # modules importés dans leur ANCIENNE version -> « module has no attribute … ».
+    # On recharge à la volée ceux qui sont périmés (live_results AVANT glue, qui en
+    # dépend), évitant d'avoir à rebooter l'app manuellement.
+    try:
+        import importlib
+        if not hasattr(live_results, "update_kickoffs"):
+            importlib.reload(live_results)
+        if not hasattr(glue, "resolve_knockout_results"):
+            importlib.reload(glue)
+    except Exception:                                 # reload best-effort
+        pass
+
     status: dict = {"ok": True, "as_of": None, "warnings": [], "live": None}
     try:
         load_history.download(force=True)          # dataset martj42 frais
