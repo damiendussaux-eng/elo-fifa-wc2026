@@ -100,6 +100,8 @@ def _rank_changes_cached(as_of: str | None) -> dict:
 MOIS = ["", "janv.", "févr.", "mars", "avril", "mai", "juin",
         "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 HEADER_H = 30             # hauteur de l'en-tête de colonne (= décalage des connecteurs)
+COL_W = 260               # largeur FIXE d'une colonne/case (assez large pour les noms
+                          # complets + Elo pré-match/delta ; le tout déborde -> scroll H)
 BOX_H = 78                # hauteur FIXE d'une case-match (contient date + 2 équipes en entier)
 SLOT0 = 92                # emplacement d'un 16e (doit dépasser BOX_H pour laisser un écart)
 BODY_H = SLOT0 * 16       # hauteur du corps -> alignement « arbre » (space-around)
@@ -263,7 +265,7 @@ def match_box(bx) -> str:
 
 def _round_column(label: str, boxes_html: str) -> str:
     return (
-        '<div style="flex:0 0 168px;display:flex;flex-direction:column;">'
+        f'<div style="flex:0 0 {COL_W}px;display:flex;flex-direction:column;">'
         f'<div style="height:{HEADER_H}px;line-height:{HEADER_H}px;text-align:center;'
         f'font-weight:700;color:#f72585;text-transform:uppercase;font-size:0.78rem;'
         f'letter-spacing:.5px;">{label}</div>'
@@ -812,7 +814,8 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(status_legend(), unsafe_allow_html=True)
-    st.caption("↔ Sur petit écran, faites glisser l'arbre horizontalement. "
+    st.caption("↔ Faites glisser l'arbre horizontalement (souris/tactile) pour voir "
+               "toutes les colonnes, y compris sur grand écran. "
                "Affiches, horaires (heure de Paris) et résultats sont alimentés "
                "automatiquement par les sources officielles (martj42 + ESPN) ; les "
                "8 meilleurs 3es sont placés d'après les affiches réelles dès "

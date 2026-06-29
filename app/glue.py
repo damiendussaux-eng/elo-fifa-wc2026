@@ -182,6 +182,7 @@ def load_tree(home_adv: float = 0.0) -> dict:
     match_meta, r0, res, scores = _fetch_state()
     meta = _team_meta()
     kickoffs = _load_kickoffs()
+    prematch = knockout_prematch_elo()        # Elo pré-match figé des matchs KO joués
 
     rounds: list[list[MatchBox]] = []
     for r in range(5):
@@ -200,6 +201,16 @@ def load_tree(home_adv: float = 0.0) -> dict:
                            date=d, venue=venue, a=a, b=b)
             _apply_probs(box, home_adv)
             box.real_score = scores.get((r, m))   # buts réels (a, b) si match joué
+            # Match KO JOUÉ : on fige l'Elo affiché sur l'Elo PRÉ-match + variation
+            # (gagné/perdu), comme en poules, et on recalcule P/% sur cet Elo figé.
+            if box.real_score is not None and a.known and b.known:
+                pm = prematch.get(frozenset((a.name, b.name)))
+                if pm:
+                    if a.name in pm:
+                        a.elo, a.elo_delta = pm[a.name]
+                    if b.name in pm:
+                        b.elo, b.elo_delta = pm[b.name]
+                    _apply_probs(box, home_adv)   # P/% sur l'Elo pré-match figé
             # Heure de Paris (ESPN) si les deux équipes sont connues. On aligne aussi
             # la date sur celle d'ESPN pour rester cohérent avec l'heure affichée.
             if a.known and b.known:
@@ -220,6 +231,46 @@ def load_tree(home_adv: float = 0.0) -> dict:
         rounds.append(boxes)
 
     return {"labels": ROUND_LABELS, "rounds": rounds}
+
+
+_PREMATCH_KO_CACHE: dict = {}
+
+
+def knockout_prematch_elo() -> dict:
+    """
+    {frozenset{home, away}: {nom: (elo_pre, delta)}} pour chaque match WC2026 de la
+    phase à élimination directe : Elo AVANT le match et variation due AU match, par
+    rejeu chronologique (mêmes règles que compute_current_ratings). Sert à figer
+    l'affichage Elo des matchs KO joués (comme pour les poules).
+
+    Mémoïsé (clé = volume/date max du dataset) : un seul rejeu par rafraîchissement.
+    """
+    from collections import defaultdict
+
+    from ingestion import load_history
+    from ingestion.source_groups import GROUP_END
+    from ratings_engine import k_factor, update_match
+
+    df = load_history.load()
+    key = (len(df), str(df["date"].max()))
+    if _PREMATCH_KO_CACHE.get("key") == key:
+        return _PREMATCH_KO_CACHE["val"]
+
+    ratings: dict[str, float] = defaultdict(lambda: DEFAULT_RATING)
+    out: dict = {}
+    for row in df.itertuples(index=False):
+        h, a = row.home_team, row.away_team
+        pre_h, pre_a = ratings[h], ratings[a]
+        k = k_factor(row.tournament)
+        rh, ra, _ = update_match(pre_h, pre_a, int(row.home_score),
+                                 int(row.away_score), k, neutral=bool(row.neutral))
+        ratings[h], ratings[a] = rh, ra
+        if row.tournament == "FIFA World Cup" and row.date > GROUP_END:
+            out[frozenset((h, a))] = {h: (pre_h, rh - pre_h),
+                                      a: (pre_a, ra - pre_a)}
+    _PREMATCH_KO_CACHE.clear()
+    _PREMATCH_KO_CACHE.update(key=key, val=out)
+    return out
 
 
 def qualified_teams() -> list[Participant]:
