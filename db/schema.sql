@@ -68,11 +68,14 @@ CREATE TABLE IF NOT EXISTS group_matches (
     PRIMARY KEY (group_code, home_team_id, away_team_id)
 );
 
--- Résultats connus -> avancement dans l'arbre.
+-- Résultats connus -> avancement dans l'arbre. score_a/score_b = buts RÉELS
+-- alignés sur les positions de la case (a = position 0, b = position 1).
 CREATE TABLE IF NOT EXISTS results (
     round_idx       INTEGER NOT NULL,
     match_idx       INTEGER NOT NULL,
     winner_team_id  INTEGER NOT NULL REFERENCES teams(team_id) ON DELETE CASCADE,
+    score_a         INTEGER,
+    score_b         INTEGER,
     played_at       TEXT,
     PRIMARY KEY (round_idx, match_idx)
 );

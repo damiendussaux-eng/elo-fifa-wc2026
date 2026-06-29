@@ -59,6 +59,7 @@ def bootstrap_refresh() -> dict:
         # Source plus à jour (ESPN) : complète martj42 pour les matchs récents,
         # avec vérification de concordance. Tolérant si ESPN est injoignable.
         status["live"] = live_results.update_cache()
+        status["kickoffs"] = live_results.update_kickoffs()   # horaires (heure de Paris)
     except Exception as exc:
         status["warnings"].append(f"source live ESPN indisponible ({exc})")
     try:
@@ -68,6 +69,7 @@ def bootstrap_refresh() -> dict:
         source_fixtures.load()                     # bracket + dates (emplacements)
         source_groups.load()                       # matchs + prédictions figées
         status["resolved"] = glue.resolve_bracket()  # place 1ers/2es de groupe
+        status["ko"] = glue.resolve_knockout_results()  # résultats KO -> avancement
         status["as_of"] = str(as_of)
     except Exception as exc:                        # base KO -> on garde l'existant
         status["ok"] = False
@@ -213,8 +215,14 @@ def team_row(part, pr: bool = False, real_goal=None) -> str:
 
 
 def match_box(bx) -> str:
-    head = f"M{bx.fifa_no} · {date_fr(bx.date)}"
+    when = date_fr(bx.date)
+    if getattr(bx, "time", None):
+        when += f" · {bx.time}"               # heure de Paris (ESPN)
+    head = f"M{bx.fifa_no} · {when}"
     extra = f' <span style="color:#5b6178;">· {bx.venue}</span>' if bx.venue else ""
+    rs = getattr(bx, "real_score", None)       # buts réels (a, b) si match joué
+    ra = rs[0] if rs else None
+    rb = rs[1] if rs else None
     bg, acc = STATUS_BG[_match_status(bx.date, bx.a.is_winner or bx.b.is_winner)]
     # En-tête : date à gauche, libellés des colonnes P (prédit) / R (réel) à droite.
     header = (
@@ -233,7 +241,8 @@ def match_box(bx) -> str:
         f'<div style="background:{bg};border:1px solid #2a3358;'
         f'border-left:4px solid {acc};border-radius:8px;'
         f'padding:4px 7px;box-sizing:border-box;height:{BOX_H}px;overflow:hidden;">'
-        f'{header}{team_row(bx.a, pr=True)}{team_row(bx.b, pr=True)}'
+        f'{header}{team_row(bx.a, pr=True, real_goal=ra)}'
+        f'{team_row(bx.b, pr=True, real_goal=rb)}'
         '</div>'
     )
 
@@ -790,8 +799,10 @@ def main() -> None:
     )
     st.markdown(status_legend(), unsafe_allow_html=True)
     st.caption("↔ Sur petit écran, faites glisser l'arbre horizontalement. "
-               "Les slots « 3e groupe » (8 meilleurs 3es) se remplissent une fois "
-               "les 12 groupes terminés — placement indicatif (Annexe C FIFA).")
+               "Affiches, horaires (heure de Paris) et résultats sont alimentés "
+               "automatiquement par les sources officielles (martj42 + ESPN) ; les "
+               "8 meilleurs 3es sont placés d'après les affiches réelles dès "
+               "qu'elles sont publiées. Le vainqueur de chaque match avance tout seul.")
     col_tree, col_list = st.columns([5, 1.2], gap="medium")
     with col_tree:
         render_tree(tree)

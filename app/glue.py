@@ -51,6 +51,8 @@ class MatchBox:
     a: Participant
     b: Participant
     score: tuple[int, int] | None = None   # score le plus probable (couche buts)
+    time: str | None = None                # heure de Paris ('HH:MM'), si connue (ESPN)
+    real_score: tuple[int, int] | None = None  # buts RÉELS (a, b) si match joué
 
     @property
     def both_known(self) -> bool:
@@ -101,12 +103,32 @@ def _fetch_state():
             "SELECT match_idx, position, team_id, label FROM bracket_slots WHERE round_idx = 0"
         ).fetchall()
         results = conn.execute(
-            "SELECT round_idx, match_idx, winner_team_id FROM results"
+            "SELECT round_idx, match_idx, winner_team_id, score_a, score_b FROM results"
         ).fetchall()
     match_meta = {(r, m): (_to_date(d), v, f) for r, m, d, v, f in matches}
     r0 = {(mi, pos): (tid, lab) for mi, pos, tid, lab in slots0}
-    res = {(r, m): w for r, m, w in results}
-    return match_meta, r0, res
+    res = {(r, m): w for r, m, w, _sa, _sb in results}
+    scores = {(r, m): (sa, sb) for r, m, _w, sa, sb in results if sa is not None}
+    return match_meta, r0, res, scores
+
+
+def _load_kickoffs() -> dict:
+    """{frozenset{nomA, nomB}: (date_iso, 'HH:MM')} depuis le cache ESPN (heure de
+    Paris). Vide si le cache n'existe pas (ESPN injoignable au dernier bootstrap)."""
+    import csv as _csv
+
+    from ingestion.live_results import KICKOFFS_CSV
+    out: dict = {}
+    if not KICKOFFS_CSV.exists():
+        return out
+    try:
+        with open(KICKOFFS_CSV, encoding="utf-8") as f:
+            for row in _csv.DictReader(f):
+                out[frozenset((row["team_a"], row["team_b"]))] = (
+                    row["date_paris"], row["time_paris"])
+    except Exception:
+        return {}
+    return out
 
 
 def _participant_round0(r0, meta, match_idx, position) -> Participant:
@@ -157,8 +179,9 @@ def _apply_probs(box: MatchBox, home_adv: float) -> None:
 
 def load_tree(home_adv: float = 0.0) -> dict:
     """Construit l'arbre complet (liste de tours, chacun = liste de MatchBox)."""
-    match_meta, r0, res = _fetch_state()
+    match_meta, r0, res, scores = _fetch_state()
     meta = _team_meta()
+    kickoffs = _load_kickoffs()
 
     rounds: list[list[MatchBox]] = []
     for r in range(5):
@@ -176,6 +199,16 @@ def load_tree(home_adv: float = 0.0) -> dict:
             box = MatchBox(round_idx=r, match_idx=m, fifa_no=fifa,
                            date=d, venue=venue, a=a, b=b)
             _apply_probs(box, home_adv)
+            box.real_score = scores.get((r, m))   # buts réels (a, b) si match joué
+            # Heure de Paris (ESPN) si les deux équipes sont connues. On aligne aussi
+            # la date sur celle d'ESPN pour rester cohérent avec l'heure affichée.
+            if a.known and b.known:
+                ko = kickoffs.get(frozenset((a.name, b.name)))
+                if ko is not None:
+                    kd = _to_date(ko[0])
+                    if kd is not None:
+                        box.date = kd
+                    box.time = ko[1]
             # marquage du vainqueur de CE match s'il est connu
             winner_id = res.get((r, m))
             if winner_id is not None:
@@ -319,33 +352,157 @@ def resolve_bracket() -> int:
                 (tid, label),
             )
             n += cur.rowcount
-        # Affecte les 8 meilleurs 3es aux 8 slots « 3e groupe ». Placement indicatif,
-        # mais on ÉVITE un affrontement contre le 1er de son PROPRE groupe (impossible
-        # selon l'Annexe C). L'adversaire (vainqueur de groupe) est déjà placé.
+        # Affecte les slots « 3e groupe ». PRIORITÉ à la source réelle : ESPN donne
+        # l'adversaire EXACT de chaque tête de série en R32 -> on ancre sur le 1er/2e
+        # déjà placé (le sibling de chaque slot « 3e groupe ») et on y met l'adversaire
+        # qu'ESPN annonce. À défaut (ESPN injoignable / affiche pas encore publiée),
+        # repli sur une affectation indicative des 8 meilleurs 3es, en évitant un
+        # affrontement contre le 1er de son PROPRE groupe (impossible, Annexe C).
         if best_thirds:
+            id_by_name = dict(cur.execute("SELECT name, team_id FROM teams").fetchall())
+            name_by_id = {tid: nm for nm, tid in id_by_name.items()}
+            espn_opp = _espn_opponents()           # {nom: nom_adversaire} (R32 réel)
             group_of_team = dict(
                 cur.execute("SELECT team_id, group_code FROM group_teams").fetchall())
             slots = cur.execute(
                 "SELECT match_idx, position, team_id, label FROM bracket_slots "
                 "WHERE round_idx = 0").fetchall()
             by_pos = {(mi, pos): tid for mi, pos, tid, _lab in slots}
+            placed_ids = {t for t in by_pos.values() if t is not None}
             third_slots = sorted((mi, pos) for mi, pos, _t, lab in slots
                                  if lab == "3e groupe")
             remaining = list(best_thirds)
             for mi, pos in third_slots:
-                opp_group = group_of_team.get(by_pos.get((mi, 1 - pos)))
-                pick = next((i for i, (g, _t) in enumerate(remaining)
-                             if g != opp_group), 0 if remaining else None)
-                if pick is None:
+                anchor_id = by_pos.get((mi, 1 - pos))   # tête de série (déjà placée)
+                tid = None
+                # 1) adversaire réel d'après ESPN
+                opp_name = espn_opp.get(name_by_id.get(anchor_id))
+                opp_id = id_by_name.get(opp_name) if opp_name else None
+                if opp_id is not None and opp_id not in placed_ids:
+                    tid = opp_id
+                    remaining = [(g, t) for g, t in remaining if t != opp_id]
+                # 2) repli : meilleur 3e disponible hors même groupe
+                if tid is None and remaining:
+                    opp_group = group_of_team.get(anchor_id)
+                    pick = next((i for i, (g, _t) in enumerate(remaining)
+                                 if g != opp_group), 0)
+                    _g, tid = remaining.pop(pick)
+                if tid is None:
                     continue
-                _g, tid = remaining.pop(pick)
                 cur.execute(
                     "UPDATE bracket_slots SET team_id = %s "
                     "WHERE round_idx = 0 AND match_idx = %s AND position = %s",
                     (tid, mi, pos),
                 )
+                placed_ids.add(tid)
                 n += cur.rowcount
     return n
+
+
+def _espn_opponents() -> dict[str, str]:
+    """{nom: nom_adversaire} pour les matchs à élimination directe vus chez ESPN
+    (source de vérité des affiches réelles). Déduit des paires du cache horaires,
+    en NE gardant que la fenêtre KO (> fin des poules) pour ne pas confondre avec
+    le dernier adversaire de poule d'une même équipe."""
+    from ingestion.source_groups import GROUP_END
+    cutoff = GROUP_END.strftime("%Y-%m-%d")
+    opp: dict[str, str] = {}
+    for pair, (diso, _t) in _load_kickoffs().items():
+        if diso <= cutoff:
+            continue                            # match de poule -> ignoré
+        teams = tuple(pair)
+        if len(teams) == 2:
+            opp[teams[0]] = teams[1]
+            opp[teams[1]] = teams[0]
+    return opp
+
+
+def resolve_knockout_results() -> int:
+    """
+    Dérive les RÉSULTATS de la phase à élimination directe depuis le dataset fusionné
+    (martj42 + ESPN) et les écrit dans `results` -> les vainqueurs avancent tout seuls
+    dans l'arbre, et le score réel s'affiche dans la case.
+
+    Méthode (sans fuite, source = mêmes données que l'Elo) :
+      - on ne considère que les matchs WC2026 APRÈS la phase de groupes (> GROUP_END) ;
+      - on parcourt l'arbre tour par tour : dès que les DEUX équipes d'une case sont
+        connues (placement de groupe puis vainqueurs déduits), on cherche leur match
+        dans le dataset ; s'il est joué, le vainqueur est enregistré (nul en temps
+        réglementaire -> départage par shootouts.csv) ;
+      - score_a/score_b sont stockés alignés sur les positions de la case (a, b).
+
+    Idempotent (DELETE puis réécriture). Retourne le nombre de matchs résolus.
+    """
+    import pandas as pd
+
+    from ingestion import load_history
+    from ingestion.source_groups import GROUP_END
+
+    df = load_history.load()
+    ko = df[(df["tournament"] == "FIFA World Cup") & (df["date"] > GROUP_END)]
+    by_pair: dict[frozenset, tuple] = {}
+    for row in ko.itertuples(index=False):
+        by_pair[frozenset((row.home_team, row.away_team))] = (
+            row.date.strftime("%Y-%m-%d"), row.home_team, row.away_team,
+            int(row.home_score), int(row.away_score))
+    try:
+        shootouts = load_history.load_shootouts()
+    except Exception:
+        shootouts = {}
+
+    with connect() as conn, conn.cursor() as cur:
+        id_by_name = dict(cur.execute("SELECT name, team_id FROM teams").fetchall())
+        slots0 = cur.execute(
+            "SELECT match_idx, position, team_id FROM bracket_slots "
+            "WHERE round_idx = 0").fetchall()
+    name_by_id = {tid: n for n, tid in id_by_name.items()}
+    r0 = {(mi, pos): tid for mi, pos, tid in slots0}
+
+    winners: dict[tuple[int, int], int] = {}
+    out_rows: list[tuple] = []                  # (round, match, winner_id, sa, sb, date)
+
+    def participant(r: int, m: int, pos: int):
+        if r == 0:
+            return r0.get((m, pos))
+        return winners.get((r - 1, 2 * m + pos))
+
+    for r in range(5):
+        for m in range(ROUND_SIZES[r]):
+            a_id, b_id = participant(r, m, 0), participant(r, m, 1)
+            if not a_id or not b_id:
+                continue
+            na, nb = name_by_id.get(a_id), name_by_id.get(b_id)
+            info = by_pair.get(frozenset((na, nb)))
+            if not info:
+                continue                        # match pas encore joué / publié
+            diso, home, away, hs, as_ = info
+            goals = {home: hs, away: as_}
+            if na not in goals or nb not in goals:
+                continue
+            ga, gb = goals[na], goals[nb]
+            if ga > gb:
+                win_name = na
+            elif gb > ga:
+                win_name = nb
+            else:                               # nul -> tirs au but
+                win_name = shootouts.get((diso, home, away))
+                if win_name is None:
+                    continue                    # vainqueur indéterminé -> on n'avance pas
+            win_id = id_by_name.get(win_name)
+            if win_id is None:
+                continue
+            winners[(r, m)] = win_id
+            out_rows.append((r, m, win_id, ga, gb, diso))
+
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM results")
+        if out_rows:
+            cur.executemany(
+                "INSERT INTO results (round_idx, match_idx, winner_team_id, "
+                "score_a, score_b, played_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                out_rows,
+            )
+    return len(out_rows)
 
 
 def group_standings(only: list[str] | None = None) -> dict[str, list[dict]]:

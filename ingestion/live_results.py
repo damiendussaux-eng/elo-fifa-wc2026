@@ -14,15 +14,35 @@ site neutre). On apparie donc par PAIRE NON ORDONNÉE {équipe, équipe} + date 
 from __future__ import annotations
 
 import csv
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import requests
 
-from ingestion.load_history import LOCAL_CSV, OVERRIDE_CSV
+from ingestion.load_history import DATA_DIR, LOCAL_CSV, OVERRIDE_CSV
 
 ESPN_URL = ("https://site.api.espn.com/apis/site/v2/sports/soccer/"
             "fifa.world/scoreboard?dates={d}")
+
+# Cache des HORAIRES de coup d'envoi (heure de Paris) récupérés d'ESPN.
+KICKOFFS_CSV = DATA_DIR / "espn_kickoffs.csv"
+# Été 2026 : la France est à l'heure d'été (CEST = UTC+2) sur TOUTE la fenêtre du
+# Mondial (11 juin → 19 juillet). Décalage fixe -> pas de dépendance tzdata.
+PARIS_OFFSET = timedelta(hours=2)
+
+
+def _to_paris(utc_iso: str) -> tuple[str, str] | None:
+    """'2026-06-28T19:00Z' (UTC) -> ('2026-06-28', '21:00') en heure de Paris."""
+    if not utc_iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    wall = dt.astimezone(timezone.utc) + PARIS_OFFSET   # heure murale de Paris
+    return wall.strftime("%Y-%m-%d"), wall.strftime("%H:%M")
 
 # Noms ESPN -> noms du dataset martj42 (uniquement là où ils diffèrent).
 ESPN_TO_DATASET = {
@@ -144,8 +164,63 @@ def update_cache(days_back: int = 6, days_fwd: int = 2) -> dict:
             "discrepancies": discrepancies, "espn_total": len(espn)}
 
 
+def fetch_kickoffs(dates: list[str]) -> dict[frozenset, tuple[str, str]]:
+    """
+    Renvoie {frozenset{équipeA, équipeB}: (date_paris, 'HH:MM')} pour TOUS les
+    matchs (joués ou à venir) vus chez ESPN sur les dates données. Noms mappés sur
+    le dataset, horaires convertis en heure de Paris.
+    """
+    out: dict[frozenset, tuple[str, str]] = {}
+    for d in dates:
+        try:
+            j = requests.get(ESPN_URL.format(d=d), timeout=20).json()
+        except Exception:
+            continue
+        for e in j.get("events", []):
+            try:
+                comp = e["competitions"][0]
+                cs = comp["competitors"]
+                h = next(c for c in cs if c["homeAway"] == "home")
+                a = next(c for c in cs if c["homeAway"] == "away")
+                hn, an = _name(h["team"]["displayName"]), _name(a["team"]["displayName"])
+                paris = _to_paris(comp.get("date") or e.get("date"))
+            except Exception:
+                continue
+            if paris is not None:
+                out[frozenset((hn, an))] = paris
+    return out
+
+
+def update_kickoffs(days_back: int = 3, days_fwd: int = 24) -> int:
+    """
+    Écrit data/espn_kickoffs.csv : horaires (heure de Paris) des matchs WC2026 sur
+    une large fenêtre (couvre toute la phase à élimination directe). Source = API
+    ESPN (datetime réel du coup d'envoi). Tolérant si ESPN est injoignable.
+
+    Colonnes : team_a, team_b (noms dataset), date_paris, time_paris. Clé = paire
+    non ordonnée d'équipes (chaque affiche est unique). Retour : nb de lignes.
+    """
+    today = date.today()
+    dates = [(today + timedelta(days=k)).strftime("%Y%m%d")
+             for k in range(-days_back, days_fwd + 1)]
+    ks = fetch_kickoffs(dates)
+    rows = []
+    for pair, (diso, t) in ks.items():
+        teams = sorted(pair)
+        if len(teams) == 2:
+            rows.append((teams[0], teams[1], diso, t))
+    if rows:
+        with open(KICKOFFS_CSV, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["team_a", "team_b", "date_paris", "time_paris"])
+            w.writerows(sorted(rows, key=lambda r: (r[2], r[3])))
+    return len(rows)
+
+
 if __name__ == "__main__":
     import config  # noqa: F401
+    nk = update_kickoffs()
+    print(f"Horaires ESPN (heure de Paris) : {nk} -> {KICKOFFS_CSV.name}")
     res = update_cache()
     print(f"ESPN : {res['espn_total']} matchs terminés vus.")
     print(f"Complétés (absents de martj42) : {res['filled']} -> {OVERRIDE_CSV.name}")
