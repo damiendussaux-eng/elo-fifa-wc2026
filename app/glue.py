@@ -112,22 +112,39 @@ def _fetch_state():
     return match_meta, r0, res, scores
 
 
-def _load_kickoffs() -> dict:
-    """{frozenset{nomA, nomB}: (date_iso, 'HH:MM')} depuis le cache ESPN (heure de
-    Paris). Vide si le cache n'existe pas (ESPN injoignable au dernier bootstrap)."""
+def _load_ko_cache() -> list[dict]:
+    """Liste des matchs KO vus chez ESPN (cache espn_ko.csv) : round_idx, city, date,
+    time, home, away, hs, as_, completed, winner. Vide si ESPN injoignable."""
     import csv as _csv
 
-    from ingestion.live_results import KICKOFFS_CSV
-    out: dict = {}
-    if not KICKOFFS_CSV.exists():
+    from ingestion.live_results import KO_CSV
+    out: list[dict] = []
+    if not KO_CSV.exists():
         return out
     try:
-        with open(KICKOFFS_CSV, encoding="utf-8") as f:
+        with open(KO_CSV, encoding="utf-8") as f:
             for row in _csv.DictReader(f):
-                out[frozenset((row["team_a"], row["team_b"]))] = (
-                    row["date_paris"], row["time_paris"])
+                out.append({
+                    "round_idx": int(row["round_idx"]),
+                    "city": row["city"], "date": row["date"], "time": row["time"],
+                    "home": row["home"], "away": row["away"],
+                    "hs": int(row["hs"]) if row["hs"] != "" else None,
+                    "as_": int(row["as_"]) if row["as_"] != "" else None,
+                    "completed": row["completed"] == "1",
+                    "winner": row["winner"],
+                })
     except Exception:
-        return {}
+        return []
+    return out
+
+
+def _load_kickoffs() -> dict:
+    """{frozenset{nomA, nomB}: (date_iso, 'HH:MM')} depuis le cache KO ESPN (heure de
+    Paris). Vide si le cache n'existe pas (ESPN injoignable au dernier bootstrap)."""
+    out: dict = {}
+    for e in _load_ko_cache():
+        if e["date"]:
+            out[frozenset((e["home"], e["away"]))] = (e["date"], e["time"])
     return out
 
 
@@ -468,84 +485,109 @@ def _espn_opponents() -> dict[str, str]:
     return opp
 
 
+def _pick_event(events: list[dict], slot_date) -> dict | None:
+    """Choisit l'événement ESPN d'une case : un seul -> lui ; plusieurs (même ville,
+    même tour, ex. R32 Inglewood/Arlington) -> celui dont la date est la plus proche
+    de la case (robuste à des dates de grille approximatives)."""
+    if not events:
+        return None
+    if len(events) == 1:
+        return events[0]
+    sd = str(slot_date or "")[:10]
+    exact = [e for e in events if e["date"] == sd]
+    if exact:
+        return exact[0]
+    from datetime import date as _d
+
+    def _diff(e):
+        try:
+            return abs((_d.fromisoformat(e["date"]) - _d.fromisoformat(sd)).days)
+        except Exception:
+            return 10**6
+    return min(events, key=_diff)
+
+
 def resolve_knockout_results() -> int:
     """
-    Dérive les RÉSULTATS de la phase à élimination directe depuis le dataset fusionné
-    (martj42 + ESPN) et les écrit dans `results` -> les vainqueurs avancent tout seuls
-    dans l'arbre, et le score réel s'affiche dans la case.
+    Pilote l'arbre DIRECTEMENT depuis ESPN (cache espn_ko.csv), source de vérité des
+    affiches ET des résultats — sans dépendre de nos classements ni de shootouts.csv :
 
-    Méthode (sans fuite, source = mêmes données que l'Elo) :
-      - on ne considère que les matchs WC2026 APRÈS la phase de groupes (> GROUP_END) ;
-      - on parcourt l'arbre tour par tour : dès que les DEUX équipes d'une case sont
-        connues (placement de groupe puis vainqueurs déduits), on cherche leur match
-        dans le dataset ; s'il est joué, le vainqueur est enregistré (nul en temps
-        réglementaire -> départage par shootouts.csv) ;
-      - score_a/score_b sont stockés alignés sur les positions de la case (a, b).
+      - place les équipes des 16es (round 0) d'après les affiches RÉELLES d'ESPN,
+        par jointure (tour, ville) sur la grille officielle (corrige tout écart de
+        tie-break / Annexe C) ;
+      - enregistre dans `results` le vainqueur de CHAQUE match KO joué — TIRS AU BUT
+        INCLUS, via le drapeau `winner` d'ESPN — avec le score réel aligné sur les
+        positions de la case. L'avancement des tours suivants est déduit par
+        load_tree ; on l'utilise aussi ici pour orienter scores et affiches.
 
-    Idempotent (DELETE puis réécriture). Retourne le nombre de matchs résolus.
+    Jointure par (tour, ville) : robuste aux dates approximatives. Idempotent
+    (réécriture de `results` ; UPDATE des slots R32). Retour : nb de matchs résolus.
     """
-    import pandas as pd
+    ko = _load_ko_cache()
+    if not ko:
+        return 0
 
-    from ingestion import load_history
-    from ingestion.source_groups import GROUP_END
+    from collections import defaultdict
+    by_round_city: dict[tuple[int, str], list[dict]] = defaultdict(list)
+    for e in ko:
+        by_round_city[(e["round_idx"], e["city"])].append(e)
 
-    df = load_history.load()
-    ko = df[(df["tournament"] == "FIFA World Cup") & (df["date"] > GROUP_END)]
-    by_pair: dict[frozenset, tuple] = {}
-    for row in ko.itertuples(index=False):
-        by_pair[frozenset((row.home_team, row.away_team))] = (
-            row.date.strftime("%Y-%m-%d"), row.home_team, row.away_team,
-            int(row.home_score), int(row.away_score))
-    try:
-        shootouts = load_history.load_shootouts()
-    except Exception:
-        shootouts = {}
-
+    out_rows: list[tuple] = []                  # (round, match, winner_id, sa, sb, date)
     with connect() as conn, conn.cursor() as cur:
         id_by_name = dict(cur.execute("SELECT name, team_id FROM teams").fetchall())
-        slots0 = cur.execute(
-            "SELECT match_idx, position, team_id FROM bracket_slots "
-            "WHERE round_idx = 0").fetchall()
-    name_by_id = {tid: n for n, tid in id_by_name.items()}
-    r0 = {(mi, pos): tid for mi, pos, tid in slots0}
+        name_by_id = {tid: nm for nm, tid in id_by_name.items()}
+        slot_meta = {(r, m): (v, d) for r, m, v, d in cur.execute(
+            "SELECT round_idx, match_idx, venue, match_date FROM matches").fetchall()}
 
-    winners: dict[tuple[int, int], int] = {}
-    out_rows: list[tuple] = []                  # (round, match, winner_id, sa, sb, date)
-
-    def participant(r: int, m: int, pos: int):
-        if r == 0:
-            return r0.get((m, pos))
-        return winners.get((r - 1, 2 * m + pos))
-
-    for r in range(5):
-        for m in range(ROUND_SIZES[r]):
-            a_id, b_id = participant(r, m, 0), participant(r, m, 1)
-            if not a_id or not b_id:
+        # 1) Affiches des 16es : base = placement existant (resolve_bracket), puis
+        #    OVERRIDE par les affiches réelles d'ESPN.
+        r0 = {(mi, pos): tid for mi, pos, tid in cur.execute(
+            "SELECT match_idx, position, team_id FROM bracket_slots WHERE round_idx=0"
+        ).fetchall() if tid is not None}
+        for m in range(ROUND_SIZES[0]):
+            venue, sdate = slot_meta.get((0, m), (None, None))
+            ev = _pick_event(by_round_city.get((0, venue), []), sdate)
+            if ev is None:
                 continue
-            na, nb = name_by_id.get(a_id), name_by_id.get(b_id)
-            info = by_pair.get(frozenset((na, nb)))
-            if not info:
-                continue                        # match pas encore joué / publié
-            diso, home, away, hs, as_ = info
-            goals = {home: hs, away: as_}
-            if na not in goals or nb not in goals:
-                continue
-            ga, gb = goals[na], goals[nb]
-            if ga > gb:
-                win_name = na
-            elif gb > ga:
-                win_name = nb
-            else:                               # nul -> tirs au but
-                win_name = shootouts.get((diso, home, away))
-                if win_name is None:
-                    continue                    # vainqueur indéterminé -> on n'avance pas
-            win_id = id_by_name.get(win_name)
-            if win_id is None:
-                continue
-            winners[(r, m)] = win_id
-            out_rows.append((r, m, win_id, ga, gb, diso))
+            for pos, nm in ((0, ev["home"]), (1, ev["away"])):
+                tid = id_by_name.get(nm)
+                if tid is not None:
+                    cur.execute(
+                        "UPDATE bracket_slots SET team_id=%s WHERE round_idx=0 "
+                        "AND match_idx=%s AND position=%s", (tid, m, pos))
+                    r0[(m, pos)] = tid
 
-    with connect() as conn, conn.cursor() as cur:
+        # 2) Résultats de tous les tours (vainqueur ESPN, score orienté a/b).
+        winners: dict[tuple[int, int], int] = {}
+
+        def participant(r, m, pos):
+            return r0.get((m, pos)) if r == 0 else winners.get((r - 1, 2 * m + pos))
+
+        for r in range(5):
+            for m in range(ROUND_SIZES[r]):
+                a_id, b_id = participant(r, m, 0), participant(r, m, 1)
+                if not a_id or not b_id:
+                    continue
+                venue, sdate = slot_meta.get((r, m), (None, None))
+                ev = _pick_event(by_round_city.get((r, venue), []), sdate)
+                if ev is None or not ev["completed"]:
+                    continue
+                goals = {ev["home"]: ev["hs"], ev["away"]: ev["as_"]}
+                na, nb = name_by_id.get(a_id), name_by_id.get(b_id)
+                if na not in goals or nb not in goals or goals[na] is None:
+                    continue
+                ga, gb = goals[na], goals[nb]
+                win_id = id_by_name.get(ev["winner"])
+                if win_id not in (a_id, b_id):      # drapeau ESPN absent -> repli score
+                    if ga > gb:
+                        win_id = a_id
+                    elif gb > ga:
+                        win_id = b_id
+                    else:
+                        continue                    # nul sans vainqueur -> on n'avance pas
+                winners[(r, m)] = win_id
+                out_rows.append((r, m, win_id, ga, gb, ev["date"]))
+
         cur.execute("DELETE FROM results")
         if out_rows:
             cur.executemany(

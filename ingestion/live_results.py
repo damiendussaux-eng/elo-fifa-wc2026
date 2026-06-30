@@ -24,8 +24,12 @@ from ingestion.load_history import DATA_DIR, LOCAL_CSV, OVERRIDE_CSV
 ESPN_URL = ("https://site.api.espn.com/apis/site/v2/sports/soccer/"
             "fifa.world/scoreboard?dates={d}")
 
-# Cache des HORAIRES de coup d'envoi (heure de Paris) récupérés d'ESPN.
-KICKOFFS_CSV = DATA_DIR / "espn_kickoffs.csv"
+# Cache de la phase à élimination directe (affiches + horaires + résultats), récupéré
+# d'ESPN, source de vérité de l'arbre. Une ligne par match KO vu chez ESPN.
+KO_CSV = DATA_DIR / "espn_ko.csv"
+# season.slug d'ESPN -> index de tour de l'arbre (0 = 16es … 4 = finale).
+SLUG_TO_ROUND = {"round-of-32": 0, "round-of-16": 1, "quarterfinals": 2,
+                 "semifinals": 3, "final": 4}
 # Été 2026 : la France est à l'heure d'été (CEST = UTC+2) sur TOUTE la fenêtre du
 # Mondial (11 juin → 19 juillet). Décalage fixe -> pas de dépendance tzdata.
 PARIS_OFFSET = timedelta(hours=2)
@@ -164,63 +168,85 @@ def update_cache(days_back: int = 6, days_fwd: int = 2) -> dict:
             "discrepancies": discrepancies, "espn_total": len(espn)}
 
 
-def fetch_kickoffs(dates: list[str]) -> dict[frozenset, tuple[str, str]]:
+def fetch_ko_events(dates: list[str]) -> list[dict]:
     """
-    Renvoie {frozenset{équipeA, équipeB}: (date_paris, 'HH:MM')} pour TOUS les
-    matchs (joués ou à venir) vus chez ESPN sur les dates données. Noms mappés sur
-    le dataset, horaires convertis en heure de Paris.
+    Événements de la phase à élimination directe vus chez ESPN sur les dates données.
+    Chaque dict : round_idx, city, date (Paris), time (Paris), home, away, hs, as_,
+    completed, winner (nom dataset du vainqueur, TIRS AU BUT INCLUS via le drapeau
+    `winner` d'ESPN). Noms mappés sur le dataset. Les affiches encore indéterminées
+    (« Round of 32 5 Winner ») sont ignorées (équipes inconnues).
     """
-    out: dict[frozenset, tuple[str, str]] = {}
+    out: list[dict] = []
+    seen: set = set()
     for d in dates:
         try:
             j = requests.get(ESPN_URL.format(d=d), timeout=20).json()
         except Exception:
             continue
         for e in j.get("events", []):
+            r = SLUG_TO_ROUND.get(e.get("season", {}).get("slug", ""))
+            if r is None:
+                continue                            # pas un match KO
             try:
                 comp = e["competitions"][0]
                 cs = comp["competitors"]
                 h = next(c for c in cs if c["homeAway"] == "home")
                 a = next(c for c in cs if c["homeAway"] == "away")
-                hn, an = _name(h["team"]["displayName"]), _name(a["team"]["displayName"])
-                paris = _to_paris(comp.get("date") or e.get("date"))
+                hd, ad = h["team"]["displayName"], a["team"]["displayName"]
             except Exception:
                 continue
-            if paris is not None:
-                out[frozenset((hn, an))] = paris
+            if "Winner" in hd or "Winner" in ad:
+                continue                            # affiche encore indéterminée
+            hn, an = _name(hd), _name(ad)
+            city = (((comp.get("venue", {}) or {}).get("address", {}) or {})
+                    .get("city", "") or "").split(",")[0].strip()
+            paris = _to_paris(comp.get("date") or e.get("date"))
+            diso, tparis = paris if paris else ("", "")
+            completed = bool(comp["status"]["type"].get("completed"))
+            try:
+                hs, as_ = int(h.get("score")), int(a.get("score"))
+            except (TypeError, ValueError):
+                hs = as_ = None
+            winner = hn if h.get("winner") else (an if a.get("winner") else "")
+            key = (r, city, diso, hn, an)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"round_idx": r, "city": city, "date": diso, "time": tparis,
+                        "home": hn, "away": an, "hs": hs, "as_": as_,
+                        "completed": completed, "winner": winner})
     return out
 
 
-def update_kickoffs(days_back: int = 3, days_fwd: int = 24) -> int:
+def update_ko_cache(days_back: int = 10, days_fwd: int = 30) -> int:
     """
-    Écrit data/espn_kickoffs.csv : horaires (heure de Paris) des matchs WC2026 sur
-    une large fenêtre (couvre toute la phase à élimination directe). Source = API
-    ESPN (datetime réel du coup d'envoi). Tolérant si ESPN est injoignable.
-
-    Colonnes : team_a, team_b (noms dataset), date_paris, time_paris. Clé = paire
-    non ordonnée d'équipes (chaque affiche est unique). Retour : nb de lignes.
+    Écrit data/espn_ko.csv : affiches + horaires (heure de Paris) + résultats de la
+    phase à élimination directe, sur une fenêtre couvrant tout le tableau final.
+    Source = ESPN (vérité des affiches et des vainqueurs, tirs au but inclus).
+    Tolérant si ESPN est injoignable. Retour : nb de matchs KO écrits.
     """
     today = date.today()
     dates = [(today + timedelta(days=k)).strftime("%Y%m%d")
              for k in range(-days_back, days_fwd + 1)]
-    ks = fetch_kickoffs(dates)
-    rows = []
-    for pair, (diso, t) in ks.items():
-        teams = sorted(pair)
-        if len(teams) == 2:
-            rows.append((teams[0], teams[1], diso, t))
-    if rows:
-        with open(KICKOFFS_CSV, "w", encoding="utf-8", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["team_a", "team_b", "date_paris", "time_paris"])
-            w.writerows(sorted(rows, key=lambda r: (r[2], r[3])))
-    return len(rows)
+    evs = fetch_ko_events(dates)
+    cols = ["round_idx", "city", "date", "time", "home", "away",
+            "hs", "as_", "completed", "winner"]
+    with open(KO_CSV, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(cols)
+        for e in sorted(evs, key=lambda x: (x["round_idx"], x["date"], x["city"])):
+            w.writerow([e["round_idx"], e["city"], e["date"], e["time"],
+                        e["home"], e["away"],
+                        "" if e["hs"] is None else e["hs"],
+                        "" if e["as_"] is None else e["as_"],
+                        int(e["completed"]), e["winner"]])
+    return len(evs)
 
 
 if __name__ == "__main__":
     import config  # noqa: F401
-    nk = update_kickoffs()
-    print(f"Horaires ESPN (heure de Paris) : {nk} -> {KICKOFFS_CSV.name}")
+    nk = update_ko_cache()
+    print(f"Matchs KO ESPN (affiches/horaires/résultats) : {nk} -> {KO_CSV.name}")
     res = update_cache()
     print(f"ESPN : {res['espn_total']} matchs terminés vus.")
     print(f"Complétés (absents de martj42) : {res['filled']} -> {OVERRIDE_CSV.name}")

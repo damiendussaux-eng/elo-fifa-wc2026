@@ -56,7 +56,7 @@ def bootstrap_refresh() -> dict:
     # dépend), évitant d'avoir à rebooter l'app manuellement.
     try:
         import importlib
-        if not hasattr(live_results, "update_kickoffs"):
+        if not hasattr(live_results, "update_ko_cache"):
             importlib.reload(live_results)
         if not hasattr(glue, "resolve_knockout_results"):
             importlib.reload(glue)
@@ -73,7 +73,7 @@ def bootstrap_refresh() -> dict:
         # Source plus à jour (ESPN) : complète martj42 pour les matchs récents,
         # avec vérification de concordance. Tolérant si ESPN est injoignable.
         status["live"] = live_results.update_cache()
-        status["kickoffs"] = live_results.update_kickoffs()   # horaires (heure de Paris)
+        status["ko_cache"] = live_results.update_ko_cache()  # affiches+horaires+résultats KO (ESPN)
     except Exception as exc:
         status["warnings"].append(f"source live ESPN indisponible ({exc})")
     try:
@@ -82,8 +82,8 @@ def bootstrap_refresh() -> dict:
         load_ratings.persist(ratings, as_of)       # Elo courant
         source_fixtures.load()                     # bracket + dates (emplacements)
         source_groups.load()                       # matchs + prédictions figées
-        status["resolved"] = glue.resolve_bracket()  # place 1ers/2es de groupe
-        status["ko"] = glue.resolve_knockout_results()  # résultats KO -> avancement
+        status["resolved"] = glue.resolve_bracket()  # place 1ers/2es de groupe (repli)
+        status["ko_resolved"] = glue.resolve_knockout_results()  # affiches+résultats KO (ESPN)
         status["as_of"] = str(as_of)
     except Exception as exc:                        # base KO -> on garde l'existant
         status["ok"] = False
