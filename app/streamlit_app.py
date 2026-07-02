@@ -642,6 +642,87 @@ def render_stats(fixtures: dict[str, list[dict]]) -> None:
     st.markdown(html + explain, unsafe_allow_html=True)
 
 
+def _argmax3(probs) -> int:
+    """Indice de l'issue la plus probable (0 = victoire A, 1 = nul, 2 = victoire B),
+    même ordre que evaluation.outcome_index."""
+    return max(range(3), key=lambda i: probs[i])
+
+
+def _mecp_term(pred, real) -> float:
+    """Somme des 3 carrés d'un match pour la MECP : (buts A), (buts B), (écart)."""
+    pa, pb = pred
+    ra, rb = real
+    return (pa - ra) ** 2 + (pb - rb) ** 2 + ((pa - pb) - (ra - rb)) ** 2
+
+
+def render_ko_stats(ko: list[dict]) -> None:
+    """Précision des prévisions de la PHASE FINALE (matchs KO joués) : résultats bien
+    prévus, RPS moyen, scores exacts, et MECP (erreur quadratique de score)."""
+    n = len(ko)
+    if n == 0:
+        st.caption("Aucun match de phase finale joué : statistiques indisponibles.")
+        return
+    res_ok = sum(1 for m in ko
+                 if _argmax3(m["probs"]) == evaluation.outcome_index(*m["real"]))
+    score_ok = sum(1 for m in ko if tuple(m["pred"]) == tuple(m["real"]))
+    rps = evaluation.rps_mean([list(m["probs"]) for m in ko],
+                              [evaluation.outcome_index(*m["real"]) for m in ko])
+    mecp = sum(_mecp_term(m["pred"], m["real"]) for m in ko) / n
+
+    rps_card = (
+        '<div style="text-align:center;min-width:120px;">'
+        f'<div style="font-size:1.9rem;font-weight:800;color:#000000;'
+        f'line-height:1.1;margin-top:6px;">{rps:.3f}</div>'
+        '<div style="color:#000000;font-size:0.9rem;font-weight:700;">RPS moyen</div>'
+        '<div style="color:#333333;font-size:0.78rem;">qualité des probabilités</div>'
+        '</div>'
+    )
+    mecp_card = (
+        '<div style="text-align:center;min-width:120px;">'
+        f'<div style="font-size:1.9rem;font-weight:800;color:#000000;'
+        f'line-height:1.1;margin-top:6px;">{mecp:.2f}</div>'
+        '<div style="color:#000000;font-size:0.9rem;font-weight:700;">MECP</div>'
+        '<div style="color:#333333;font-size:0.78rem;">erreur de score (0 = parfait)</div>'
+        '</div>'
+    )
+    html = (
+        '<div style="display:flex;gap:20px;justify-content:center;align-items:center;'
+        'flex-wrap:wrap;padding:6px 0;">'
+        + _svg_donut(res_ok / n, "Résultats bien prévus",
+                     f"{res_ok}/{n} matchs (V/N/D)", "#16e0a3")
+        + rps_card
+        + _svg_donut(score_ok / n, "Scores exacts bien prédits",
+                     f"{score_ok}/{n} matchs", "#378add")
+        + mecp_card
+        + '</div>'
+    )
+    explain = (
+        '<div style="color:#000000;font-size:0.84rem;line-height:1.6;'
+        'max-width:820px;margin:4px auto 0;">'
+        '<b>MECP — Moyenne des Erreurs Carrées de Prévision.</b> Pour chaque match KO '
+        'joué, on additionne trois carrés : (buts prévus A − buts réels A)², '
+        '(buts prévus B − buts réels B)² et (écart prévu − écart réel)² ; la MECP est '
+        'la <b>moyenne</b> de cette somme sur tous les matchs. '
+        '<b>Plus c\'est proche de 0, meilleure est la prévision de score</b> ; plus '
+        'c\'est élevé, moins bonne. Contrairement au « % de scores exacts » (tout ou '
+        'rien), la MECP mesure <b>à quel point</b> on s\'est trompé et récompense les '
+        'quasi-bons scores.'
+        '<div style="text-align:center;font-family:var(--font-mono),monospace;'
+        'background:#f1efe8;border:1px solid #d3d1c7;border-radius:6px;'
+        'padding:10px 12px;margin:10px auto 6px;max-width:640px;font-size:0.95rem;">'
+        'MECP = <sup>1</sup>⁄<sub>N</sub> · ∑<sub>matchs</sub> [ (p<sub>A</sub>−r'
+        '<sub>A</sub>)² + (p<sub>B</sub>−r<sub>B</sub>)² + '
+        '((p<sub>A</sub>−p<sub>B</sub>) − (r<sub>A</sub>−r<sub>B</sub>))² ]</div>'
+        '<div style="font-size:0.8rem;">avec <b>p</b> = buts prévus, <b>r</b> = buts '
+        'réels, A et B les deux équipes, N le nombre de matchs KO joués. '
+        'Le <b>RPS</b> (voir phase de groupes) juge les <b>probabilités</b> d\'issue ; '
+        'la <b>MECP</b> juge les <b>buts</b>. Les deux se mettent à jour à chaque '
+        'nouveau résultat.</div>'
+        '</div>'
+    )
+    st.markdown(html + explain, unsafe_allow_html=True)
+
+
 def accessible_text(fixtures: dict[str, list[dict]], tree: dict | None = None) -> str:
     """Texte simple (lecteur d'écran) des prédictions des matchs NON joués :
     matchs de poule à venir PUIS matchs de la phase finale."""
@@ -826,6 +907,11 @@ def main() -> None:
     with col_list:
         render_qualified(glue.teams_in_contention(),
                          _rank_changes_cached(boot.get("as_of")))
+
+    st.markdown("### 📈 Précision des prévisions (phase éliminatoires)")
+    st.caption("Sur les matchs de la phase finale déjà joués, prédiction pré-match "
+               "figée vs résultat réel. Mis à jour à chaque nouveau résultat.")
+    render_ko_stats(glue.knockout_predictions())
 
     st.markdown("### 📊 Phases de groupes")
     st.caption("Classements actualisés depuis les résultats des matchs de poule.")

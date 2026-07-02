@@ -290,6 +290,53 @@ def knockout_prematch_elo() -> dict:
     return out
 
 
+def knockout_predictions() -> list[dict]:
+    """
+    Pour chaque match de la phase à élimination directe DÉJÀ JOUÉ : la prédiction
+    PRÉ-match figée (score probable + probas des 3 issues victoire A / nul / victoire
+    B, terrain neutre comme l'arbre) et le score RÉEL, aligné (a = position 0).
+
+    Sert aux stats de précision de la phase finale (résultats, RPS, scores exacts,
+    MECP). Se met à jour tout seul : lit `results` (rempli depuis ESPN).
+
+    Retour : [ {a_name, b_name, pred:(pa,pb), probs:(pA,pNul,pB), real:(ra,rb)} ].
+    """
+    _match_meta, r0, res, scores = _fetch_state()
+    if not scores:
+        return []
+    meta = _team_meta()
+    prematch = knockout_prematch_elo()
+
+    def part_id(r, m, pos):
+        if r == 0:
+            return r0.get((m, pos), (None, None))[0]
+        return res.get((r - 1, 2 * m + pos))
+
+    out: list[dict] = []
+    for (r, m), (sa, sb) in scores.items():
+        a_id, b_id = part_id(r, m, 0), part_id(r, m, 1)
+        if not a_id or not b_id:
+            continue
+        na = meta.get(a_id, {}).get("name")
+        nb = meta.get(b_id, {}).get("name")
+        if na is None or nb is None:
+            continue
+        pm = prematch.get(frozenset((na, nb)))
+        if pm and na in pm and nb in pm:
+            ea, eb = pm[na][0], pm[nb][0]           # Elo PRÉ-match (figé)
+        else:
+            ea, eb = meta[a_id]["elo"], meta[b_id]["elo"]   # repli (Elo courant)
+        W = win_expectancy(ea, eb, 0.0)
+        la = min(max(goals_model.lambda_neutral(W), GOALS_CLIP[0]), GOALS_CLIP[1])
+        lb = min(max(goals_model.lambda_neutral(1.0 - W), GOALS_CLIP[0]), GOALS_CLIP[1])
+        mat = goals_model.scoreline_matrix(la, lb)
+        win_a, draw, win_b = goals_model.outcome_probabilities(mat)
+        pa, pb = goals_model.consistent_score(mat)
+        out.append({"a_name": na, "b_name": nb, "pred": (pa, pb),
+                    "probs": (win_a, draw, win_b), "real": (sa, sb)})
+    return out
+
+
 def qualified_teams() -> list[Participant]:
     """Équipes déjà qualifiées (placées en R32), triées par Elo décroissant."""
     with connect() as conn:
