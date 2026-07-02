@@ -692,14 +692,16 @@ def render_ko_stats(ko: list[dict]) -> None:
     crps = evaluation.crps_mean(matrices, reals)
 
     cards = (
+        # --- à gauche : la qualité des PROBABILITÉS ---
         _svg_donut(res_ok / n, "Résultats bien prévus",
                    f"{res_ok}/{n} matchs (V/N/D)", "#16e0a3")
         + _stat_card(f"{rps:.3f}", "RPS moyen", "qualité des probabilités")
+        + _stat_card(f"{log_loss:.2f}", "Log-loss", "grille des scores (nats)")
+        # --- à droite : la qualité des SCORES ---
         + _svg_donut(score_ok / n, "Scores exacts bien prévus",
                      f"{score_ok}/{n} matchs", "#378add")
         + _stat_card(f"{mecp:.2f}", "MECP",
                      f"score (0 = parfait) · réf. « score moyen » : {mecp_ref:.2f}")
-        + _stat_card(f"{log_loss:.2f}", "Log-loss", "grille des scores (nats)")
         + _stat_card(f"{crps:.2f}", "CRPS", "écart de buts (0 = parfait)")
     )
     html = ('<div style="display:flex;gap:20px;justify-content:center;'
