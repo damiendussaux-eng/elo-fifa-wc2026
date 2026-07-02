@@ -64,6 +64,44 @@ def pct_exact_score(pred_scores: list[tuple[int, int]],
     return ok / len(pred_scores)
 
 
+def crps_goal_diff(matrix, goals_i: int, goals_j: int) -> float:
+    """
+    CRPS discret sur l'ÉCART DE BUTS D = i − j (distribution de Skellam dérivée de la
+    grille des scores prévue). Généralise le RPS à une cible ordinale à plusieurs
+    niveaux (…, −2, −1, 0, +1, +2, …) :
+
+        CRPS = Σ_k ( F(k) − 1{k ≥ d_obs} )²
+
+    avec F = fonction de répartition PRÉVUE de D, k parcourant les entiers, d_obs =
+    écart réel. Exprimé en « buts d'écart ». 0 = parfait ; plus bas = mieux. Plus doux
+    que le log-loss : il récompense d'être PROCHE et pénalise proportionnellement à la
+    distance, au lieu de punir uniquement le score exact.
+    """
+    from collections import defaultdict
+    pmf: dict[int, float] = defaultdict(float)
+    nx, ny = matrix.shape
+    for x in range(nx):
+        row = matrix[x]
+        for y in range(ny):
+            pmf[x - y] += float(row[y])
+    d_obs = goals_i - goals_j
+    lo = min(min(pmf), d_obs)
+    hi = max(max(pmf), d_obs)
+    cdf = 0.0
+    total = 0.0
+    for k in range(lo, hi + 1):
+        cdf += pmf.get(k, 0.0)
+        total += (cdf - (1.0 if k >= d_obs else 0.0)) ** 2
+    return total
+
+
+def crps_mean(matrices, real_scores) -> float:
+    if not matrices:
+        return float("nan")
+    return sum(crps_goal_diff(m, a, b)
+               for m, (a, b) in zip(matrices, real_scores)) / len(matrices)
+
+
 def log_loss_scores(matrices, real_scores, max_goals: int = 10) -> float:
     """Log-loss moyen sur la distribution COMPLÈTE des scores (secondaire)."""
     if not matrices:

@@ -81,7 +81,7 @@ def bootstrap_refresh() -> dict:
         ratings, as_of = load_ratings.compute_current_ratings()
         load_ratings.persist(ratings, as_of)       # Elo courant
         source_fixtures.load()                     # bracket + dates (emplacements)
-        source_groups.load()                       # matchs + prédictions figées
+        source_groups.load()                       # matchs + prévisions figées
         status["resolved"] = glue.resolve_bracket()  # place 1ers/2es de groupe (repli)
         status["ko_resolved"] = glue.resolve_knockout_results()  # affiches+résultats KO (ESPN)
         status["as_of"] = str(as_of)
@@ -191,7 +191,7 @@ def flag_html(part) -> str:
 
 
 def team_row(part, pr: bool = False, real_goal=None) -> str:
-    """Ligne d'une équipe. `pr=True` (arbre) ajoute 2 colonnes : P (buts prédits)
+    """Ligne d'une équipe. `pr=True` (arbre) ajoute 2 colonnes : P (buts prévus)
     et R (buts réels, vide tant qu'indisponible)."""
     bg, fg = heat_color(part.win_prob if part.known else None)
     name = fr_name(part.name) + (" ★" if getattr(part, "is_host", False) else "")
@@ -240,7 +240,7 @@ def match_box(bx) -> str:
     ra = rs[0] if rs else None
     rb = rs[1] if rs else None
     bg, acc = STATUS_BG[_match_status(bx.date, bx.a.is_winner or bx.b.is_winner)]
-    # En-tête : date à gauche, libellés des colonnes P (prédit) / R (réel) à droite.
+    # En-tête : date à gauche, libellés des colonnes P (prévu) / R (réel) à droite.
     header = (
         # mêmes gap (6px) et retrait horizontal (6px) que les pastilles d'équipe,
         # pour que P et R tombent pile au-dessus des chiffres des lignes.
@@ -473,8 +473,8 @@ def _fixture_box(m: dict) -> str:
     real = m.get("real")
     draw = m.get("draw")
 
-    # Marqueur de réussite de la prédiction (matchs joués seulement) :
-    #  ✓ score exact prédit == réel ; × issue prédite (proba max) ≠ issue réelle.
+    # Marqueur de réussite de la prévision (matchs joués seulement) :
+    #  ✓ score exact prévu == réel ; × issue prévue (proba max) ≠ issue réelle.
     mark = ""
     if m["played"] and real is not None and pred is not None:
         ro = "A" if real[0] > real[1] else ("B" if real[0] < real[1] else "N")
@@ -528,10 +528,10 @@ def render_group_fixtures(fixtures: dict[str, list[dict]]) -> None:
     legend = (
         '<div style="margin-top:10px;color:#b8c0e0;font-size:0.76rem;">'
         '<b style="color:#16e0a3;">R</b> = score réel · '
-        '<b>P</b> = score prédit · le % à côté de chaque équipe = proba de victoire · '
-        '<b style="color:#16e0a3;">✓</b> score exact prédit · '
-        '<b style="color:#e24b4a;">×</b> issue (V/N/D) mal prédite.<br>'
-        'Prédictions des matchs <b>joués FIGÉES</b> (Elo d\'avant le match) ; celles '
+        '<b>P</b> = score prévu · le % à côté de chaque équipe = proba de victoire · '
+        '<b style="color:#16e0a3;">✓</b> score exact prévu · '
+        '<b style="color:#e24b4a;">×</b> issue (V/N/D) mal prévue.<br>'
+        'Prévisions des matchs <b>joués FIGÉES</b> (Elo d\'avant le match) ; celles '
         'des matchs à venir évoluent avec les résultats. Heures en <b>heure de Paris</b>.'
         '</div>'
     )
@@ -586,7 +586,7 @@ def render_stats(fixtures: dict[str, list[dict]]) -> None:
     res_ok = sum(1 for m in played if _pred_outcome(m) == _real_outcome(m["real"]))
     score_ok = sum(1 for m in played if tuple(m["real"]) == tuple(m["pred"]))
 
-    # RPS moyen sur les prédictions PRÉ-MATCH figées (probas 3 issues).
+    # RPS moyen sur les prévisions PRÉ-MATCH figées (probas 3 issues).
     rps = evaluation.rps_mean(
         [[m["a"].win_prob or 0, m["draw"] or 0, m["b"].win_prob or 0] for m in played],
         [evaluation.outcome_index(*m["real"]) for m in played],
@@ -602,9 +602,9 @@ def render_stats(fixtures: dict[str, list[dict]]) -> None:
     html = (
         '<div style="display:flex;gap:20px;justify-content:center;align-items:center;'
         'flex-wrap:wrap;padding:6px 0;">'
-        + _svg_donut(res_ok / n, "Résultats bien prédits",
+        + _svg_donut(res_ok / n, "Résultats bien prévus",
                      f"{res_ok}/{n} matchs (V/N/D)", "#16e0a3")
-        + _svg_donut(score_ok / n, "Scores exacts bien prédits",
+        + _svg_donut(score_ok / n, "Scores exacts bien prévus",
                      f"{score_ok}/{n} matchs", "#378add")
         + rps_card
         + '</div>'
@@ -613,14 +613,14 @@ def render_stats(fixtures: dict[str, list[dict]]) -> None:
         '<div style="color:#000000;font-size:0.84rem;line-height:1.6;'
         'max-width:820px;margin:4px auto 0;">'
         '<b>Qu\'est-ce que le RPS (Ranked Probability Score) ?</b> Il mesure la '
-        'qualité des <b>probabilités</b> prédites pour les 3 issues ordonnées '
+        'qualité des <b>probabilités</b> prévues pour les 3 issues ordonnées '
         '(victoire / nul / défaite), pas seulement le résultat brut. '
-        '<b>0 = prédiction parfaite</b> ; plus c\'est <b>bas</b>, mieux c\'est. '
+        '<b>0 = prévision parfaite</b> ; plus c\'est <b>bas</b>, mieux c\'est. '
         'Repères : un pronostic au hasard (1/3, 1/3, 1/3) vaut ≈ 0,22 ; un bon '
         'modèle de football international se situe autour de 0,18–0,20. '
-        'Contrairement au « % de résultats bien prédits », le RPS récompense la '
+        'Contrairement au « % de résultats bien prévus », le RPS récompense la '
         '<b>confiance bien placée</b> et pénalise les certitudes erronées. '
-        '(Calculé sur les prédictions pré-match figées des matchs de poule joués.)'
+        '(Calculé sur les prévisions pré-match figées des matchs de poule joués.)'
         '<div style="text-align:center;font-family:var(--font-mono),monospace;'
         'background:#f1efe8;border:1px solid #d3d1c7;border-radius:6px;'
         'padding:10px 12px;margin:10px auto 6px;max-width:600px;font-size:0.95rem;">'
@@ -628,7 +628,7 @@ def render_stats(fixtures: dict[str, list[dict]]) -> None:
         '∑<sub>i=1</sub><sup>r−1</sup> ( ∑<sub>j=1</sub><sup>i</sup> '
         '(p<sub>j</sub> − e<sub>j</sub>) )²</div>'
         '<div style="font-size:0.8rem;">avec <b>r = 3</b> issues ordonnées '
-        '(victoire / nul / défaite), <b>p<sub>j</sub></b> = probabilité prédite de '
+        '(victoire / nul / défaite), <b>p<sub>j</sub></b> = probabilité prévue de '
         'l\'issue j, <b>e<sub>j</sub></b> = 1 si l\'issue j est réalisée, 0 sinon. '
         'Pour r = 3 : RPS = ½·[ (p<sub>1</sub>−e<sub>1</sub>)² + '
         '(p<sub>1</sub>+p<sub>2</sub>−e<sub>1</sub>−e<sub>2</sub>)² ]. '
@@ -655,13 +655,26 @@ def _mecp_term(pred, real) -> float:
     return (pa - ra) ** 2 + (pb - rb) ** 2 + ((pa - pb) - (ra - rb)) ** 2
 
 
+def _stat_card(value: str, title: str, sub: str) -> str:
+    return (
+        '<div style="text-align:center;min-width:120px;">'
+        f'<div style="font-size:1.9rem;font-weight:800;color:#000000;'
+        f'line-height:1.1;margin-top:6px;">{value}</div>'
+        f'<div style="color:#000000;font-size:0.9rem;font-weight:700;">{title}</div>'
+        f'<div style="color:#333333;font-size:0.78rem;">{sub}</div></div>'
+    )
+
+
 def render_ko_stats(ko: list[dict]) -> None:
     """Précision des prévisions de la PHASE FINALE (matchs KO joués) : résultats bien
-    prévus, RPS moyen, scores exacts, et MECP (erreur quadratique de score)."""
+    prévus, RPS moyen, scores exacts, MECP (+ référence « score moyen »), log-loss et
+    CRPS. Tout se met à jour au fil des résultats."""
     n = len(ko)
     if n == 0:
         st.caption("Aucun match de phase finale joué : statistiques indisponibles.")
         return
+    reals = [m["real"] for m in ko]
+    matrices = [m["matrix"] for m in ko]
     res_ok = sum(1 for m in ko
                  if _argmax3(m["probs"]) == evaluation.outcome_index(*m["real"]))
     score_ok = sum(1 for m in ko if tuple(m["pred"]) == tuple(m["real"]))
@@ -669,66 +682,98 @@ def render_ko_stats(ko: list[dict]) -> None:
                               [evaluation.outcome_index(*m["real"]) for m in ko])
     mecp = sum(_mecp_term(m["pred"], m["real"]) for m in ko) / n
 
-    rps_card = (
-        '<div style="text-align:center;min-width:120px;">'
-        f'<div style="font-size:1.9rem;font-weight:800;color:#000000;'
-        f'line-height:1.1;margin-top:6px;">{rps:.3f}</div>'
-        '<div style="color:#000000;font-size:0.9rem;font-weight:700;">RPS moyen</div>'
-        '<div style="color:#333333;font-size:0.78rem;">qualité des probabilités</div>'
-        '</div>'
-    )
-    mecp_card = (
-        '<div style="text-align:center;min-width:120px;">'
-        f'<div style="font-size:1.9rem;font-weight:800;color:#000000;'
-        f'line-height:1.1;margin-top:6px;">{mecp:.2f}</div>'
-        '<div style="color:#000000;font-size:0.9rem;font-weight:700;">MECP</div>'
-        '<div style="color:#333333;font-size:0.78rem;">erreur de score (0 = parfait)</div>'
-        '</div>'
-    )
-    html = (
-        '<div style="display:flex;gap:20px;justify-content:center;align-items:center;'
-        'flex-wrap:wrap;padding:6px 0;">'
-        + _svg_donut(res_ok / n, "Résultats bien prévus",
-                     f"{res_ok}/{n} matchs (V/N/D)", "#16e0a3")
-        + rps_card
-        + _svg_donut(score_ok / n, "Scores exacts bien prédits",
+    # Référence « score moyen » (no-skill) : prévoir pour CHAQUE équipe la moyenne de
+    # buts observée sur les matchs KO joués -> MECP de base. Le modèle apporte de la
+    # valeur si sa MECP est INFÉRIEURE à cette référence.
+    mean_g = sum(ra + rb for ra, rb in reals) / (2 * n)
+    mecp_ref = sum(_mecp_term((mean_g, mean_g), r) for r in reals) / n
+
+    log_loss = evaluation.log_loss_scores(matrices, reals)
+    crps = evaluation.crps_mean(matrices, reals)
+
+    cards = (
+        _svg_donut(res_ok / n, "Résultats bien prévus",
+                   f"{res_ok}/{n} matchs (V/N/D)", "#16e0a3")
+        + _stat_card(f"{rps:.3f}", "RPS moyen", "qualité des probabilités")
+        + _svg_donut(score_ok / n, "Scores exacts bien prévus",
                      f"{score_ok}/{n} matchs", "#378add")
-        + mecp_card
-        + '</div>'
+        + _stat_card(f"{mecp:.2f}", "MECP",
+                     f"score (0 = parfait) · réf. « score moyen » : {mecp_ref:.2f}")
+        + _stat_card(f"{log_loss:.2f}", "Log-loss", "grille des scores (nats)")
+        + _stat_card(f"{crps:.2f}", "CRPS", "écart de buts (0 = parfait)")
     )
+    html = ('<div style="display:flex;gap:20px;justify-content:center;'
+            'align-items:center;flex-wrap:wrap;padding:6px 0;">' + cards + '</div>')
+
+    box = ('text-align:center;font-family:var(--font-mono),monospace;'
+           'background:#f1efe8;border:1px solid #d3d1c7;border-radius:6px;'
+           'padding:8px 12px;margin:8px auto 4px;max-width:660px;font-size:0.92rem;')
     explain = (
         '<div style="color:#000000;font-size:0.84rem;line-height:1.6;'
-        'max-width:820px;margin:4px auto 0;">'
-        '<b>MECP — Moyenne des Erreurs Carrées de Prévision.</b> Pour chaque match KO '
-        'joué, on additionne trois carrés : (buts prévus A − buts réels A)², '
-        '(buts prévus B − buts réels B)² et (écart prévu − écart réel)² ; la MECP est '
-        'la <b>moyenne</b> de cette somme sur tous les matchs. '
-        '<b>Plus c\'est proche de 0, meilleure est la prévision de score</b> ; plus '
-        'c\'est élevé, moins bonne. Contrairement au « % de scores exacts » (tout ou '
-        'rien), la MECP mesure <b>à quel point</b> on s\'est trompé et récompense les '
-        'quasi-bons scores.'
-        '<div style="text-align:center;font-family:var(--font-mono),monospace;'
-        'background:#f1efe8;border:1px solid #d3d1c7;border-radius:6px;'
-        'padding:10px 12px;margin:10px auto 6px;max-width:640px;font-size:0.95rem;">'
-        'MECP = <sup>1</sup>⁄<sub>N</sub> · ∑<sub>matchs</sub> [ (p<sub>A</sub>−r'
-        '<sub>A</sub>)² + (p<sub>B</sub>−r<sub>B</sub>)² + '
+        'max-width:860px;margin:4px auto 0;">'
+
+        # --- RPS ---
+        '<b>RPS (Ranked Probability Score).</b> Mesure la qualité des '
+        '<b>probabilités</b> prévues pour les 3 issues ORDONNÉES (victoire A / nul / '
+        'victoire B), pas seulement le résultat brut. <b>0 = parfait</b> ; plus c\'est '
+        '<b>bas</b>, mieux c\'est. Repères : un pronostic au hasard (⅓, ⅓, ⅓) vaut '
+        '≈ 0,22 ; un bon modèle de foot international se situe vers 0,18–0,20. Il '
+        'récompense la <b>confiance bien placée</b> et pénalise les certitudes fausses.'
+        f'<div style="{box}">RPS = <sup>1</sup>⁄<sub>(r−1)</sub> · ∑<sub>i=1</sub>'
+        '<sup>r−1</sup> ( ∑<sub>j=1</sub><sup>i</sup> (p<sub>j</sub> − e<sub>j</sub>) )²'
+        '&nbsp;&nbsp;·&nbsp;&nbsp; RPS<sub>moyen</sub> = <sup>1</sup>⁄<sub>N</sub> · '
+        '∑<sub>matchs</sub> RPS(match)</div>'
+        '<div style="font-size:0.8rem;">r = 3 issues ordonnées ; p<sub>j</sub> = proba '
+        'prévue de l\'issue j ; e<sub>j</sub> = 1 si l\'issue j est réalisée, 0 sinon. '
+        'Réf. : Epstein (1969) ; Constantinou &amp; Fenton (2012).</div>'
+
+        # --- MECP ---
+        '<div style="margin-top:12px;"><b>MECP — Moyenne des Erreurs Carrées de '
+        'Prévision.</b> Pour chaque match, on additionne trois carrés : (buts prévus A '
+        '− réels A)², (buts prévus B − réels B)² et (écart prévu − écart réel)² ; la '
+        'MECP est la <b>moyenne</b> de cette somme. <b>0 = parfait</b> ; plus bas = '
+        'mieux. Contrairement au « % de scores exacts » (tout-ou-rien), elle mesure '
+        '<b>à quel point</b> on s\'est trompé sur les <b>buts</b>. La <b>référence '
+        '« score moyen »</b> prévoit pour chaque équipe la moyenne de buts observée : '
+        'le modèle n\'apporte de la valeur que si sa MECP est <b>sous</b> cette '
+        'référence.</div>'
+        f'<div style="{box}">MECP = <sup>1</sup>⁄<sub>N</sub> · ∑<sub>matchs</sub> '
+        '[ (p<sub>A</sub>−r<sub>A</sub>)² + (p<sub>B</sub>−r<sub>B</sub>)² + '
         '((p<sub>A</sub>−p<sub>B</sub>) − (r<sub>A</sub>−r<sub>B</sub>))² ]</div>'
-        '<div style="font-size:0.8rem;">avec <b>p</b> = buts prévus, <b>r</b> = buts '
-        'réels, A et B les deux équipes, N le nombre de matchs KO joués. '
-        'Le <b>RPS</b> (voir phase de groupes) juge les <b>probabilités</b> d\'issue ; '
-        'la <b>MECP</b> juge les <b>buts</b>. Les deux se mettent à jour à chaque '
-        'nouveau résultat.</div>'
+
+        # --- CRPS / log-loss ---
+        '<div style="margin-top:12px;"><b>CRPS &amp; log-loss — la qualité de toute la '
+        'distribution de buts prévue</b> (le modèle ne sort pas qu\'un score, mais une '
+        '<i>loi de probabilité</i> sur toutes les grilles de scores). '
+        '<b>Log-loss (score logarithmique)</b> = −moyenne de log P(score EXACT réalisé) '
+        'sous la loi prévue : récompense d\'avoir mis une forte probabilité sur le score '
+        'réellement survenu, sur toute la grille. Punit <b>très fortement</b> d\'avoir '
+        'donné une proba quasi nulle à ce qui arrive (métrique « dure », en nats ; '
+        '0 = proba 1 sur le bon score). '
+        '<b>CRPS (Continuous Ranked Probability Score)</b> = généralisation du RPS à '
+        'une échelle ordinale complète — ici l\'<b>écart de buts</b> (…, −1, 0, +1, …) : '
+        'distance entre la répartition prévue de l\'écart et l\'écart réel, sommée sur '
+        'tous les seuils. Métrique « douce » (en buts) qui distingue une victoire 1‑0 '
+        'd\'un 5‑0 — ce que le RPS (3 issues seulement) ne fait pas. Les deux : '
+        '<b>0 = parfait, plus bas = mieux</b>.</div>'
+        f'<div style="{box}">Log-loss = −<sup>1</sup>⁄<sub>N</sub> · ∑<sub>matchs</sub> '
+        'ln P<sub>modèle</sub>(score réel)&nbsp;&nbsp;·&nbsp;&nbsp; '
+        'CRPS = <sup>1</sup>⁄<sub>N</sub> · ∑<sub>matchs</sub> ∑<sub>k</sub> '
+        '( F(k) − 1{k ≥ d} )²</div>'
+        '<div style="font-size:0.8rem;">F = répartition prévue de l\'écart de buts, '
+        'k parcourt les entiers, d = écart réel (buts A − buts B). Toutes ces '
+        'statistiques se mettent à jour à chaque nouveau résultat.</div>'
         '</div>'
     )
     st.markdown(html + explain, unsafe_allow_html=True)
 
 
 def accessible_text(fixtures: dict[str, list[dict]], tree: dict | None = None) -> str:
-    """Texte simple (lecteur d'écran) des prédictions des matchs NON joués :
+    """Texte simple (lecteur d'écran) des prévisions des matchs NON joués :
     matchs de poule à venir PUIS matchs de la phase finale."""
     now = datetime.now().strftime("%d/%m/%Y à %H:%M")
     out = [
-        "COUPE DU MONDE 2026 — PRÉDICTIONS DES MATCHS NON ENCORE JOUÉS",
+        "COUPE DU MONDE 2026 — PRÉVISIONS DES MATCHS NON ENCORE JOUÉS",
         f"Document généré le {now}.",
         "Estimations Elo + modèle de buts. Matchs supposés en terrain neutre.",
         "Heures données en heure de Paris.",
@@ -909,7 +954,7 @@ def main() -> None:
                          _rank_changes_cached(boot.get("as_of")))
 
     st.markdown("### 📈 Précision des prévisions (phase éliminatoires)")
-    st.caption("Sur les matchs de la phase finale déjà joués, prédiction pré-match "
+    st.caption("Sur les matchs de la phase finale déjà joués, prévision pré-match "
                "figée vs résultat réel. Mis à jour à chaque nouveau résultat.")
     render_ko_stats(glue.knockout_predictions())
 
@@ -917,23 +962,23 @@ def main() -> None:
     st.caption("Classements actualisés depuis les résultats des matchs de poule.")
     render_groups(glue.group_standings(only=DISPLAY_GROUPS))
 
-    st.markdown("### ⚽ Matchs de poule — prédit (P) vs réel (R)")
+    st.markdown("### ⚽ Matchs de poule — prévu (P) vs réel (R)")
     st.caption("Matchs joués (score réel R) puis à venir (heure de Paris), par groupe. "
                "Matchs supposés en terrain neutre.")
     st.markdown(status_legend(), unsafe_allow_html=True)
     fixtures = glue.group_fixtures(only=DISPLAY_GROUPS)
     render_group_fixtures(fixtures)
 
-    st.markdown("### 📈 Précision des prédictions (matchs de poule joués)")
+    st.markdown("### 📈 Précision des prévisions (matchs de poule joués)")
     render_stats(fixtures)
 
     st.markdown("### ♿ Accessibilité")
-    st.caption("Fichier texte des prédictions des matchs non encore joués, "
+    st.caption("Fichier texte des prévisions des matchs non encore joués, "
                "lisible par un lecteur d'écran.")
     st.download_button(
-        "⬇️ Télécharger les prédictions (texte accessible)",
+        "⬇️ Télécharger les prévisions (texte accessible)",
         data=accessible_text(fixtures, tree),
-        file_name="predictions_matchs_a_venir.txt",
+        file_name="previsions_matchs_a_venir.txt",
         mime="text/plain",
     )
 

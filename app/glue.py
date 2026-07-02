@@ -333,7 +333,8 @@ def knockout_predictions() -> list[dict]:
         win_a, draw, win_b = goals_model.outcome_probabilities(mat)
         pa, pb = goals_model.consistent_score(mat)
         out.append({"a_name": na, "b_name": nb, "pred": (pa, pb),
-                    "probs": (win_a, draw, win_b), "real": (sa, sb)})
+                    "probs": (win_a, draw, win_b), "real": (sa, sb),
+                    "matrix": mat})           # grille complète -> log-loss & CRPS
     return out
 
 
